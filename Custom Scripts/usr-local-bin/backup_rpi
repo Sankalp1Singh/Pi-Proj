@@ -1,0 +1,111 @@
+#!/bin/bash
+
+# Raspberry Pi SD Card backup script...
+
+start=`date +%s`
+
+# define default paramaters -- must be customized per installation!!!
+# Assumes a usb mounted SD card with Raspian installed for backup as...
+clone="usb-Generic_STORAGE_DEVICE_000000000272-0:0"
+# with two mount points...
+clone_mnts="/mnt/os_clone"
+boot="$clone_mnts/boot"
+root="$clone_mnts/root"
+# NOOB partitions...
+#boot_partition="part6"
+#root_partition="part7"
+# Raspian partitions....
+boot_partition="part1"
+root_partition="part2"
+
+# define default paramaters
+e=`date +_%Y%m%d_%H%M%S`
+logRoot="/tmp/backup_rpi"
+logBase="$logRoot.log"
+log="$logRoot$e.log"
+
+
+### backup procedure...
+echo "### [$HOSTNAME] SC CARD BACKUP BEGUN: `date`" > $log 2>&1
+echo "# CLONE:  $clone" >> $log 2>&1
+echo "# LOG:    $log" >> $log 2>&1
+echo "# MOUNTS: $clone_mnts" >> $log 2>&1
+echo "#         $boot" >> $log 2>&1
+echo "#         $root" >> $log 2>&1
+echo "# PARTS:  $boot_partition (boot)" >> $log 2>&1
+echo "#         $root_partition (root)" >> $log 2>&1
+
+echo $0 >> $log 2>&1
+echo >> $log 2>&1
+
+# check mountpoints exist
+if [ ! -d $clone_mnts ]
+then
+  mkdir $clone_mnts
+  echo clone mountpoint $clone_mnts created! >> $log 2>&1
+fi
+if [ ! -d $boot ]
+then
+  mkdir $boot
+  echo boot clone mountpoint $boot created! >> $log 2>&1
+fi
+if [ ! -d $root ]
+then
+  mkdir $root
+  echo boot clone mountpoint $root created! >> $log 2>&1
+fi
+
+# mount the boot and root partitions of the clone
+echo "mounting clone partitions..." >> $log 2>&1
+mount /dev/disk/by-id/$clone-$boot_partition $boot >> $log 2>&1
+mount /dev/disk/by-id/$clone-$root_partition $root >> $log 2>&1
+echo >> $log 2>&1
+
+# mirror the /boot partition of the main sd card to the clone partition
+echo "mirroring /boot partition to $boot/..." >> $log 2>&1
+rsync -aHv --delete /boot/* $boot/ >> $log 2>&1
+echo >> $log 2>&1
+
+# mirror the / (root) partition of the main sd card to the clone partition
+# excluding special system folders: /boot, /dev, ....
+echo "mirroring /, i.e. root partition, excluding special folders..." >> $log 2>&1
+echo >> $log 2>&1
+# declare a list of root folders to save, excluding special system areas
+declare -a folders=("bin" "etc" "home" "lib" "man" "opt" "root" "sbin" "srv" "usr" "var")
+# loop through the folders list
+for d in "${folders[@]}"
+do
+   echo "# mirroring /$d to $root/$d/..." >> $log 2>&1
+   rsync -aHv --delete /$d/ $root/$d/ >> $log 2>&1
+   echo >> $log 2>&1
+done
+echo "checking root symbolic links..." >> $log 2>&1
+for s in $( find / -maxdepth 1 -type l ); do
+    if [ ! -e $root$s ]; then
+        echo "creating symbolic link: $root$s" >> $log 2>&1
+        ln -s $(readlink -f $s) $root$s
+    fi
+done
+echo >> $log 2>&1
+
+
+# unmount partitions...
+echo >> $log 2>&1
+echo "unmounting partitions..." >> $log 2>&1
+umount $boot >> $log 2>&1
+umount $root >> $log 2>&1
+echo >> $log 2>&1
+
+#cleanup tmp files
+find $logRoot* -mtime +30 | 2>/dev/null xargs -r rm -- >> $log 2>&1
+
+stop=`date +%s`
+elaspsed=`expr $stop - $start`
+echo "### ELAPSED TIME: $(date -d "1970-01-01 $elapsed sec" +%H:%M:%S)" >> $log 2>&1
+
+# report log...
+cp $log $logBase
+subj=`echo "CLONE BACKUP [$HOSTNAME]" | tr a-z A-Z`
+cat $log | /usr/local/bin/mailto.py "$subj"
+
+
